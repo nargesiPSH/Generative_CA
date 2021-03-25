@@ -6,8 +6,7 @@
 
 # --------------------------------------------
 # Executable and its arguments
-#mount = /vol/research/MCMC
-JobBatchName = "OCVSM"
+JobBatchName = "CA-System"
 executable    = continauth.sh
 arguments     = 
 
@@ -22,14 +21,9 @@ log    = $ENV(PWD)/condorOut/c$(cluster).p$(process).log
 output = $ENV(PWD)/condorOut/c$(cluster).p$(process).out
 error  = $ENV(PWD)/condorOut/c$(cluster).p$(process).error
 
-# -----------------------------------
-# File Transfer, Input, Output
-#should_transfer_files = YES
-#transfer_input_files= mnist_deep.py
-#when_to_transfer_output = ON_EXIT
-
 # -------------------------------------
 # Requirements for the Job (Requirements are explained in further detail in example09.submit_file)
+#update environment to your local environment location
 environment = "mount=/vol/research/MCMC/" 
 
 +CanCheckpoint = True
