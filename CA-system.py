@@ -4,7 +4,7 @@
 # # Siamese CNN & OCSVM
 # 
 # *Created by Holger Buech, Q1/2019*
-# * updated by Narges Pourshahrokhi, 2021*
+# *Updated by Narges Pourshahrokhi, 2021*
 # 
 # **Description**   
 # 
