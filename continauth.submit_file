@@ -32,7 +32,7 @@ environment = "mount=/vol/research/MCMC/"
 
 # --------------------------------------
 # Resources
-request_GPUs     = 3
+request_GPUs     = 
 request_CPUs     = 1
 request_memory   = 7000
 
