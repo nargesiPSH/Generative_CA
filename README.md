@@ -12,3 +12,5 @@ References:
 [1] https://github.com/dynobo/ContinAuth
 
 [2] https://github.com/bethgelab/foolbox
+
+[3] https://github.com/jsyoon0823/TimeGAN
