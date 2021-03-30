@@ -1,7 +1,28 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+#Created by Narges Pourshahrokhi 2021
+#0- imstall
+#1- turn your model to foolbox model for example:
+#fmodel = fb.TensorFlowModel(model, bounds=bounds, preprocessing=preprocessing)
+#2- dataset it should be a batch of native tensors, i.e. PyTorch tensors, TensorFlow tensors, or JAX arrays, depending on which framework you use.
+#images, labels = fb.utils.samples(fmodel, dataset='imagenet', batchsize=16)
+#3-Attacking the Model 
+#3-a clean accuracy --> fb.utils.accuracy(fmodel, images, labels)
+#3-b run an attack  --> attack = fb.attacks.LinfDeepFoolAttack()
+#3-c apply the attack on our model --> raw, clipped, is_adv = attack(fmodel, images, labels, epsilons=0.03)
 
+#The raw adversarial examples. This depends on the attack and we cannot make an guarantees about this output.
+#The clipped adversarial examples. These are guaranteed to not be perturbed more than epsilon and thus are the actual adversarial examples you want to visualize. Note that some of them might not actually #switch the class. To know which samples are actually adversarial, you should look at the third tensor.
+#The third tensor contains a boolean for each sample, indicating which samples are true adversarials that are both misclassified and within the epsilon balls around the clean samples.
+
+
+import torchvision.models as models
+import eagerpy as ep
+import foolbox
+from foolbox import PyTorchModel, accuracy, samples
+from foolbox.attacks import LinfPGD
+import pandas as pd 
 
 # Standard
 from pathlib import Path
@@ -55,7 +76,7 @@ from utils import utils_ppp
 from utils import utils_eer
 from utils import utils_plot_distance_hist
 from utils import utils_plot_training_loss
-from utils import utils_generate_cv_scenarios
+from utils2 import utils_generate_cv_scenarios2 
 from utils import utils_create_cv_splits
 from utils import utils_cv_report
 from utils import utils_plot_randomsearch_results
@@ -67,15 +88,6 @@ ipy = get_ipython()
 
 # Custom
 from srcc.dataset_loader_hdf5 import DatasetLoader
-
-# Global utitlity functions are loaded from separate notebook:
-#get_ipython().run_line_magic('run', 'utils.ipynb')
-
-
-# ### 1.2 Configuration <a id='1.2'>&nbsp;</a>
-
-# In[2]:
-
 
 # Configure Data Loading & Seed
 SEED = 712  # Used for every random function
@@ -116,20 +128,6 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 #tf.logging.set_verbosity(tf.logging.ERROR)
 np.warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
-
-
-# In[3]:
-
-
-# Workaround to remove ugly spacing between tqdm progress bars:
-#HTML("<style>.p-Widget.jp-OutputPrompt.jp-OutputArea-prompt:empty{padding: 0;border: 0;} div.output_subarea{padding:0;}</style>")
-
-
-# ### 1.3 Experiment Parameters <a id='1.3'>&nbsp;</a> 
-# Selection of parameters set that had been tested in this notebook. Select one of them to reproduce results.
-
-# In[3]:
-
 
 @dataclasses.dataclass
 class ExperimentParameters:
@@ -343,158 +341,127 @@ VALID_FCN_ROBUST = dataclasses.replace(
     ocsvm_gamma=8.296,
 )
 
-
-# ### 1.4 Select Approach <a id='1.4'>&nbsp;</a> 
-# Select the parameters to use for current notebook execution here!
-
-# In[4]:
-
-
 P = VALID_FCN_ROBUST
 
+def load_deep_feature_model(model_path):
+    warnings.filterwarnings("ignore")  # Silence depr. warnings
 
-# **Overview of current Experiment Parameters:**
-
-# In[5]:
-
-
-#utils_ppp(P)
-
-
-# ## 2. Initial Data Preparation <a id='2'>&nbsp;</a> 
-
-# ### 2.1 Load Dataset <a id='2.1'>&nbsp;</a> 
-
-# In[6]:
-
-
-hmog = DatasetLoader(
-    hdf5_file=HMOG_HDF5,
-    table_name=P.table_name,
-    max_subjects=P.max_subjects,
-    task_types=P.task_types,
-    exclude_subjects=P.exclude_subjects,
-    exclude_cols=EXCLUDE_COLS,
-    seed=SEED,
-)
-hmog.data_summary()
-
-
-# ### 2.2 Normalize Features (if global) <a id='2.2'>&nbsp;</a> 
-# Used here for naive approach (before splitting into test and training sets). Otherwise it's used during generate_pairs() and respects train vs. test borders.
-
-# In[7]:
-
-
-if P.scaler_global:
-    print("Normalize all data before splitting into train and test sets...")
-    hmog.all, scalers = utils_custom_scale(
-        hmog.all,
-        scale_cols=P.feature_cols,        
-        feature_cols=P.feature_cols,
-        scaler_name=P.scaler,
-        scope=P.scaler_scope,
-        plot=True,
-    )
-else:
-    print("Skipped, normalize after splitting.")
-
-
-# ### 2.3 Split Dataset for Valid/Test <a id='2.3'>&nbsp;</a> 
-# In two splits: one used during hyperparameter optimization, and one used during testing.
-# 
-# The split is done along the subjects: All sessions of a single subject will either be in the validation split or in the testing split, never in both.
-
-# In[8]:
-
-
-hmog.split_train_valid_train_test(
-    n_valid_train=P.n_valid_train_subjects,
-    n_valid_test=P.n_valid_test_subjects,
-    n_test_train=P.n_test_train_subjects,
-    n_test_test=P.n_test_test_subjects,
-)
-#hmog.data_summary()
-
-
-# ### 2.4 Normalize features (if not global) <a id='2.4'>&nbsp;</a> 
-
-# In[9]:
-
-
-if not P.scaler_global:
-    print("Scaling Data for Siamese Network only...")
-    print("Training Data:")
-    hmog.valid_train, _ = utils_custom_scale(
-        hmog.valid_train,
-        scale_cols=P.feature_cols,
-        feature_cols=P.feature_cols,
-        scaler_name=P.scaler,
-        scope=P.scaler_scope,
-        plot=True,        
-    )
-    print("Validation Data:")
-    hmog.valid_test, _ = utils_custom_scale(
-        hmog.valid_test,
-        scale_cols=P.feature_cols,        
-        feature_cols=P.feature_cols,
-        scaler_name=P.scaler,
-        scope=P.scaler_scope,
-        plot=True,        
-    )
-else:
-    print("Skipped, already normalized.") 
-    #load the model and calculation the metrics
-# ### 7.1 Load cached Data <a id='7.1'>&nbsp;</a> 
-# During testing, a split with different users than used for hyperparameter optimization is used:
-
-# In[69]:
-
-
-df_ocsvm_train_test = pd.read_msgpack(OUTPUT_PATH / "df_ocsvm_train_test.msg")
-# Load Siamese CNN Model
-deep_feature_model = load_deep_feature_model(OUTPUT_PATH / f"{P.name}_model.h5")
-
-df_results = None  # Will be filled with cv scores
-for i in tqdm(range(5), desc="Run", leave=False):  # Run whole test 5 times
-    for df_cv_scenarios, owner, impostors in tqdm(
-        utils_generate_cv_scenarios(
-            df_ocsvm_train_test, # this should be replaced with generated data I mean merge it with generated data
-            samples_per_subject_train=P.samples_per_subject_train,
-            samples_per_subject_test=P.samples_per_subject_test,
-            seed=SEED,
-            scaler=P.scaler,
-            scaler_global=P.scaler_global,
-            scaler_scope=P.scaler_scope,
-            deep_model=deep_feature_model,
-            model_variant=P.model_variant,
-            feature_cols=P.feature_cols,
-        ),
-        desc="Owner",
-        total=df_ocsvm_train_test["subject"].nunique(),
-        leave=False,
-    ):
-
-        X = np.array(df_cv_scenarios["X"].values.tolist())
-        y = df_cv_scenarios["label"].values
-
-        train_test_cv = utils_create_cv_splits(df_cv_scenarios["mask"].values, SEED)
-
-        model = OneClassSVM(kernel="rbf", nu=P.ocsvm_nu, gamma=P.ocsvm_gamma)
-
-        warnings.filterwarnings("ignore")
-        scores = cross_validate(
-            model,
-            X,
-            y,
-            cv=train_test_cv,
-            scoring={"eer": utils_eer_scorer, "accuracy": "accuracy"},
-            n_jobs=CORES,
-            verbose=0,
-            return_train_score=True,
+    # Copy of function from above. It's just more convenient for partially executing the notebook.
+    def k_contrastive_loss(y_true, dist):
+        """Contrastive loss from Hadsell-et-al.'06
+        http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
+        """
+        margin = P.margin
+        return K.mean(
+            y_true * K.square(dist)
+            + (1 - y_true) * K.square(K.maximum(margin - dist, 0))
         )
-        df_score = pd.DataFrame(scores)
-        df_score["owner"] = owner
-        df_score["train_eer"] = df_score["train_eer"].abs()  # Revert scorer's signflip
-        df_score["test_eer"] = df_score["test_eer"].abs()
-        df_results = pd.concat([df_results, df_score], axis=0)
+
+    # Load Trained Siamese Network
+    model = load_model(
+        str(model_path.resolve()),
+        custom_objects={"k_contrastive_loss": k_contrastive_loss},
+    )
+
+    # Extract one of the child networks
+    deep_feature_model = Model(
+        inputs=model.get_input_at(0),  # get_layer("left_inputs").input,
+        outputs=model.get_layer("basemodel").get_output_at(1),
+    )
+
+    return deep_feature_model
+
+
+def get_optimizer(name, lr=None, decay=None):
+    if name == "sgd":
+        lr = lr if lr != None else 0.01
+        decay = decay if decay != None else 0
+        optimizer = SGD(lr=lr, decay=decay)
+    elif name == "adam":
+        lr = lr if lr != None else 0.001
+        decay = decay if decay != None else 0
+        optimizer = Adam(lr=lr, decay=decay)
+    elif name == "rmsprop":
+        lr = lr if lr != None else 0.001
+        optimizer = RMSprop(lr=lr)
+    else:
+        raise BaseException("Error: Not a valid model name: 1d or 2d.")
+    return optimizer
+
+
+def k_contrastive_loss(y_true, dist):
+    """Contrastive loss from Hadsell-et-al.'06
+    http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
+    """
+    margin = P.margin
+    return K.mean(y_true * K.square(dist) + (1 - y_true) * K.square(K.maximum(margin - dist, 0)))
+
+def main() -> None:
+    df_ocsvm_train_valid = pd.read_msgpack(OUTPUT_PATH / "df_ocsvm_train_valid.msg")
+    deep_feature_model = load_deep_feature_model(OUTPUT_PATH / f"{P.name}_model.h5")
+
+    X = []
+    y = []
+    for run in tqdm(range(3)):
+        for df_cv_scenarios, owner in tqdm(
+            utils_generate_cv_scenarios2(
+                df_ocsvm_train_valid,
+                samples_per_subject_train=P.samples_per_subject_train,
+                samples_per_subject_test=P.samples_per_subject_test,
+                seed=SEED + run,
+                scaler=P.scaler,
+                scaler_global=P.scaler_global,
+                scaler_scope=P.scaler_scope,
+                model_variant=P.model_variant,
+                feature_cols=P.feature_cols,
+            )
+            ):
+                X = np.array(df_cv_scenarios["X"].values.tolist())
+                y = df_cv_scenarios["label"].values
+               
+    tf.executing_eagerly()
+    images, labels = ep.astensors(X, y)
+    # get data and test the model
+    # wrapping the tensors with ep.astensors is optional, but it allows
+    # us to work with EagerPy tensors in the following
+
+
+    optimizer = get_optimizer(P.optimizer, P.optimizer_lr)
+    deep_feature_model.compile(loss=k_contrastive_loss, optimizer=optimizer, run_eagerly=True)
+    deep_feature_model.run_eagerly = True
+    
+    fmodel = foolbox.models.TensorFlowModel(deep_feature_model, bounds=(-1,1)) #
+    clean_acc = accuracy(fmodel, images, labels)
+    print(f"clean accuracy:  {clean_acc * 100:.1f} %")
+
+    # apply the attack
+    attack = LinfPGD()
+    epsilons = [
+        0.0002,
+    ]
+    raw_advs, clipped_advs, success = attack(fmodel, X, y, epsilons=epsilons)
+
+    # calculate and report the robust accuracy (the accuracy of the model when
+    # it is attacked)
+    robust_accuracy = 1 - success.float32().mean(axis=-1)
+    print("robust accuracy for perturbations with")
+    for eps, acc in zip(epsilons, robust_accuracy):
+        print(f"  Linf norm ≤ {eps:<6}: {acc.item() * 100:4.1f} %")
+
+    # we can also manually check this
+    # we will use the clipped advs instead of the raw advs, otherwise
+    # we would need to check if the perturbation sizes are actually
+    # within the specified epsilon bound
+ 
+    print("raw attack data type")
+    print(type(raw_advs))
+    df = pd.DataFrame(raw_advs)
+    df.to_csv('raw_advs.csv', index=False)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
