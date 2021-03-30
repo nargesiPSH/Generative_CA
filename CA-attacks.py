@@ -21,7 +21,7 @@ import torchvision.models as models
 import eagerpy as ep
 import foolbox
 from foolbox import PyTorchModel, accuracy, samples
-from foolbox.attacks import LinfPGD
+from foolbox.attacks import FGSM,L2DeepFoolAttack,BoundaryAttack
 import pandas as pd 
 
 # Standard
@@ -76,7 +76,7 @@ from utils import utils_ppp
 from utils import utils_eer
 from utils import utils_plot_distance_hist
 from utils import utils_plot_training_loss
-from utils2 import utils_generate_cv_scenarios2 
+from utils2 import utils_generate_cv_scenarios2
 from utils import utils_create_cv_splits
 from utils import utils_cv_report
 from utils import utils_plot_randomsearch_results
@@ -85,10 +85,9 @@ from utils import utils_plot_training_delay
 from utils import utils_plot_detect_delay
 from IPython import get_ipython
 ipy = get_ipython()
-
+tf.enable_eager_execution()
 # Custom
 from srcc.dataset_loader_hdf5 import DatasetLoader
-
 # Configure Data Loading & Seed
 SEED = 712  # Used for every random function
 hmog_path_str = "/vol/research/MCMC/PyCharmCodes/Internship/ContinAuth-master/data/processed/hmog_dataset.hdf5"
@@ -107,8 +106,6 @@ REPORT_PATH.mkdir(parents=True, exist_ok=True)
 
 # Improve performance of Tensorflow (this improved speed _a_lot_ on my machine!!!)
 K.tf.compat.v1.set_random_seed(SEED)
-#K.tf.set_random_seed(SEED)
-#conf = K.tf.ConfigProto
 conf = K.tf.compat.v1.ConfigProto(
     device_count={"CPU": CORES},
     allow_soft_placement=True,
@@ -116,7 +113,7 @@ conf = K.tf.compat.v1.ConfigProto(
     inter_op_parallelism_threads=CORES,
 )
 K.set_session(K.tf.compat.v1.Session(config=conf))
-#K.tf.Session
+
 
 # Plotting
 if ipy is not None:
@@ -128,6 +125,7 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 #tf.logging.set_verbosity(tf.logging.ERROR)
 np.warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore")
+
 
 @dataclasses.dataclass
 class ExperimentParameters:
@@ -397,6 +395,16 @@ def k_contrastive_loss(y_true, dist):
     return K.mean(y_true * K.square(dist) + (1 - y_true) * K.square(K.maximum(margin - dist, 0)))
 
 def main() -> None:
+    # instantiate a model (could also be a TensorFlow or JAX model)
+    #model = models.resnet18(pretrained=True).eval()
+    #preprocessing = dict(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], axis=-3)
+    #fmodel = PyTorchModel(model, bounds=(0, 1), preprocessing=preprocessing)
+
+    # get data and test the model
+    # wrapping the tensors with ep.astensors is optional, but it allows
+    # us to work with EagerPy tensors in the following
+
+   
     df_ocsvm_train_valid = pd.read_msgpack(OUTPUT_PATH / "df_ocsvm_train_valid.msg")
     deep_feature_model = load_deep_feature_model(OUTPUT_PATH / f"{P.name}_model.h5")
 
@@ -418,49 +426,59 @@ def main() -> None:
             ):
                 X = np.array(df_cv_scenarios["X"].values.tolist())
                 y = df_cv_scenarios["label"].values
-               
+                #deep_model=deep_feature_model,
+
     tf.executing_eagerly()
     images, labels = ep.astensors(X, y)
-    # get data and test the model
-    # wrapping the tensors with ep.astensors is optional, but it allows
-    # us to work with EagerPy tensors in the following
-
-
     optimizer = get_optimizer(P.optimizer, P.optimizer_lr)
     deep_feature_model.compile(loss=k_contrastive_loss, optimizer=optimizer, run_eagerly=True)
     deep_feature_model.run_eagerly = True
-    
+    print("executing_eagerly?")
+    print(tf.executing_eagerly())
     fmodel = foolbox.models.TensorFlowModel(deep_feature_model, bounds=(-1,1)) #
     clean_acc = accuracy(fmodel, images, labels)
     print(f"clean accuracy:  {clean_acc * 100:.1f} %")
 
-    # apply the attack
-    attack = LinfPGD()
+    ####################################################################################### apply the Fast gradient attack 
+    attack = FGSM()
+    epsilons = [
+        0.0002,
+    ]
+    raw_advs, clipped_advs, success = attack(fmodel, X, y, epsilons=epsilons)
+    robust_accuracy = 1 - success.float32().mean(axis=-1)
+    print("robust accuracy for perturbations with")
+    df = pd.DataFrame(raw_advs)
+    df.to_csv('raw_advs_FGSM.csv', index=False)
+
+
+    ####################################################################################### apply the Deep fool attack 
+    attack = L2DeepFoolAttack()
     epsilons = [
         0.0002,
     ]
     raw_advs, clipped_advs, success = attack(fmodel, X, y, epsilons=epsilons)
 
-    # calculate and report the robust accuracy (the accuracy of the model when
-    # it is attacked)
     robust_accuracy = 1 - success.float32().mean(axis=-1)
     print("robust accuracy for perturbations with")
-    for eps, acc in zip(epsilons, robust_accuracy):
-        print(f"  Linf norm ≤ {eps:<6}: {acc.item() * 100:4.1f} %")
-
-    # we can also manually check this
-    # we will use the clipped advs instead of the raw advs, otherwise
-    # we would need to check if the perturbation sizes are actually
-    # within the specified epsilon bound
- 
-    print("raw attack data type")
-    print(type(raw_advs))
     df = pd.DataFrame(raw_advs)
-    df.to_csv('raw_advs.csv', index=False)
+    df.to_csv('raw_advs_L2DeepFoolAttack.csv', index=False)
 
+    ####################################################################################### apply the Boundary attack
+    attack = BoundaryAttack()
+    epsilons = [
+        0.0002,
+    ]
+    raw_advs, clipped_advs, success = attack(fmodel, X, y, epsilons=epsilons)
+
+    robust_accuracy = 1 - success.float32().mean(axis=-1)
+    print("robust accuracy for perturbations with")
+    df = pd.DataFrame(raw_advs)
+    df.to_csv('raw_advs_BoundaryAttack.csv', index=False)
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
