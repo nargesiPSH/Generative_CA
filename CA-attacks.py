@@ -2,7 +2,7 @@
 # coding: utf-8
 
 #Created by Narges Pourshahrokhi 2021
-#0- imstall
+#0- imstall foolbox
 #1- turn your model to foolbox model for example:
 #fmodel = fb.TensorFlowModel(model, bounds=bounds, preprocessing=preprocessing)
 #2- dataset it should be a batch of native tensors, i.e. PyTorch tensors, TensorFlow tensors, or JAX arrays, depending on which framework you use.
